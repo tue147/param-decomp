@@ -327,16 +327,18 @@ def get_component_correlations(
     component_idx: int,
     loaded: DepLoadedRun,
     top_k: Annotated[int, Query(ge=1)],
-) -> ComponentCorrelationsResponse:
+) -> ComponentCorrelationsResponse | None:
     """Get correlated components for a specific component.
 
     Returns top-k correlations across different metrics (precision, recall, Jaccard, PMI).
-    Returns None if correlations haven't been harvested for this run.
+    Returns None if correlations haven't been harvested for this run -- `component_correlations.pt`
+    is an optional sidecar, so an absent one is a state the caller handles, not an error. Matches
+    `get_component_token_stats`, whose own sidecar is optional in exactly the same way.
     """
     assert loaded.harvest is not None, "No harvest data available"
     correlations = loaded.harvest.get_correlations()
     if correlations is None:
-        raise HTTPException(status_code=404, detail="No correlations data available")
+        return None
     component_key = _canonical_to_concrete_key(layer, component_idx, loaded.topology)
 
     if not analysis.has_component(correlations, component_key):

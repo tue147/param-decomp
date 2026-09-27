@@ -214,12 +214,9 @@ class _HFGpt2PathSchema(_PathSchema):
     unembed_path = "lm_head"
 
 
-class _Gemma2DeltaPathSchema(_PathSchema):
-    """Gemma-2 (HF `Gemma2ForCausalLM`) whose decomposed matrices carry the `.delta` suffix that
-    Project 1's `AdditiveDelta` swap appends (e.g. `model.layers.3.self_attn.q_proj.delta`). Only
-    block weights get the suffix; embed/unembed do not, so the strip/append is confined to
-    `_parse_block_path`/`_render_layer_weight`.
-    """
+class _Gemma2PathSchema(_PathSchema):
+    """Gemma-2 (HF `Gemma2ForCausalLM`) decomposed in place, i.e. the target module IS the stock
+    `nn.Linear` (`model.layers.13.mlp.down_proj`)."""
 
     embedding_path = "model.embed_tokens"
     blocks = "model.layers"
@@ -227,11 +224,32 @@ class _Gemma2DeltaPathSchema(_PathSchema):
     mlp = _GLUPathSchema(base="mlp", gate="gate_proj", up="up_proj", down="down_proj")
     unembed_path = "lm_head"
 
+
+class _Gemma2DeltaPathSchema(_Gemma2PathSchema):
+    """Gemma-2 whose decomposed matrices carry the `.delta` suffix that Project 1's `AdditiveDelta`
+    swap appends (e.g. `model.layers.3.self_attn.q_proj.delta`). Only block weights get the suffix;
+    embed/unembed do not, so the strip/append is confined to
+    `_parse_block_path`/`_render_layer_weight`.
+    """
+
     def _parse_block_path(self, path: str) -> LayerWeight:
         return super()._parse_block_path(path.removesuffix(".delta"))
 
     def _render_layer_weight(self, w: LayerWeight) -> str:
         return super()._render_layer_weight(w) + ".delta"
+
+
+def _has_delta_swap(model: nn.Module) -> bool:
+    """True for a model whose decomposed matrices were swapped for an `AdditiveDelta`-style wrapper.
+
+    The two Gemma-2 schemas differ only by that suffix, and the model is the only thing that can
+    tell them apart: Project 1 swaps each target `nn.Linear` for a wrapper registering `.base` and
+    `.delta` children, while Project 2 decomposes the stock `nn.Linear` in place. Dispatching on
+    the class alone rendered `...down_proj.delta` for BOTH, which parses back fine (the strip is a
+    no-op) but names a module that does not exist on the in-place target -- a silent 404 in every
+    harvest-key lookup and an assert in the attribution-graph node mapping.
+    """
+    return any(name.endswith(".delta") for name, _ in model.named_modules())
 
 
 def get_path_schema(model: nn.Module) -> _PathSchema:
@@ -255,7 +273,7 @@ def get_path_schema(model: nn.Module) -> _PathSchema:
         case GPT2LMHeadModel():
             return _HFGpt2PathSchema()
         case Gemma2ForCausalLM():
-            return _Gemma2DeltaPathSchema()
+            return _Gemma2DeltaPathSchema() if _has_delta_swap(model) else _Gemma2PathSchema()
         case _:
             raise ValueError(
                 f"Unsupported model class {type(model).__name__}. Add a _PathSchema in path_schemas.py."
