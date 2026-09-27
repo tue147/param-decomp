@@ -68,7 +68,9 @@ class PDAdapter(DecompositionAdapter):
         cfg = self.pd_run.cfg
         return ModelMetadata(
             n_blocks=self._topology.n_blocks,
-            model_class=cfg.target.spec.model_class,
+            # Derive from the loaded model, not the spec: CallableTarget (and any non-HFTarget
+            # spec) has no `model_class` field. This is a display string (autointerp prompt header).
+            model_class=type(self.component_model.target_model).__name__,
             dataset_name=cfg.data.dataset_name,
             layer_descriptions={
                 path: self._topology.target_to_canon(path)

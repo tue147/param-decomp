@@ -173,7 +173,8 @@ def _get_pretrain_info(lm_target: LMTargetConfig) -> PretrainInfoResponse:
     from param_decomp_lab.experiments.lm.run import PretrainedTarget
 
     spec = lm_target.spec
-    model_class_name = spec.model_class
+    # CallableTarget (and other non-HFTarget specs) has no `model_class`; fall back to the spec type.
+    model_class_name = getattr(spec, "model_class", type(spec).__name__)
     model_type = model_class_name.rsplit(".", 1)[-1]
 
     target_model_config: dict[str, Any] | None = None
