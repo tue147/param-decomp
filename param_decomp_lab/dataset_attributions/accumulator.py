@@ -224,8 +224,10 @@ class AttributionHarvester:
                 for source_layer, act, grad in zip(source_layers, source_acts, grads, strict=True):
                     if source_layer == self.embed_path:
                         token_attr = (grad * act).sum(dim=-1)  # (B S)
+                        # accumulators are fp32; token_attr is the model dtype (bf16 here) and
+                        # scatter_add_ requires self.dtype == src.dtype (unlike add_'s promotion).
                         self._straight_through_attr_acc[d_idx].scatter_add_(
-                            0, tokens.flatten(), token_attr.flatten()
+                            0, tokens.flatten(), token_attr.flatten().float()
                         )
                     else:
                         ci_weighted_attr = (grad * act * ci[source_layer]).sum(dim=(0, 1))
@@ -266,7 +268,7 @@ class AttributionHarvester:
                     if source_layer == self.embed_path:
                         token_attr = (grad * act).sum(dim=-1)  # (B S)
                         embed_acc[target_layer][t_idx].scatter_add_(
-                            0, tokens.flatten(), token_attr.flatten()
+                            0, tokens.flatten(), token_attr.flatten().float()
                         )
                     else:
                         ci_weighted = (grad * act * ci[source_layer]).sum(dim=(0, 1))  # (C,)
