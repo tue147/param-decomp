@@ -96,8 +96,23 @@ class PretrainedTarget(BaseConfig):
     run_path: ModelPath
 
 
+class CallableTarget(BaseConfig):
+    """Build the target by calling an arbitrary `builder(params) -> nn.Module`.
+
+    `builder` is a fully-qualified dotted path (e.g. `pkg.mod.build_fn`) resolved the same
+    way `HFTarget.model_class` is; `params` is an opaque dict passed straight to it. This is
+    the generic seam for targets the built-in specs can't express (e.g. a base model with
+    per-matrix module swaps). The builder lives in the downstream package that owns the
+    target so this layer never imports it.
+    """
+
+    kind: Literal["callable"] = "callable"
+    builder: str
+    params: dict[str, Any] = {}
+
+
 LMTargetSpec = Annotated[
-    HFTarget | PretrainedTarget,
+    HFTarget | PretrainedTarget | CallableTarget,
     Discriminator("kind"),
 ]
 
@@ -120,18 +135,22 @@ class LMExperimentConfig(ExperimentConfig[LMTargetConfig, LMDataConfig]):
 def build_target(target_cfg: LMTargetConfig) -> nn.Module:
     """Load the LM target model in eval mode, dispatching on `target_cfg.spec.kind`."""
     spec = target_cfg.spec
-    cls = _resolve_class(spec.model_class)
     match spec:
         case HFTarget():
+            cls = _resolve_class(spec.model_class)
             target_model = ensure_cached_and_call(cls.from_pretrained, spec.model_name)
         case PretrainedTarget():
             from param_decomp_lab.experiments.lm.pretrain.run_info import PretrainRunInfo
 
+            cls = _resolve_class(spec.model_class)
             run_info = ensure_cached_and_call(PretrainRunInfo.from_path, spec.run_path)
             # Older PretrainRunInfo objects predate model_type; default it from the model class.
             if "model_type" not in run_info.model_config_dict:
                 run_info.model_config_dict["model_type"] = spec.model_class.rsplit(".", 1)[-1]
             target_model = cls.from_run_info(run_info)
+        case CallableTarget():
+            builder = _resolve_class(spec.builder)
+            target_model = builder(spec.params)
     target_model.eval()
     return target_model
 
