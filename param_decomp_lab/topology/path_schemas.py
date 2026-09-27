@@ -214,7 +214,28 @@ class _HFGpt2PathSchema(_PathSchema):
     unembed_path = "lm_head"
 
 
+class _Gemma2DeltaPathSchema(_PathSchema):
+    """Gemma-2 (HF `Gemma2ForCausalLM`) whose decomposed matrices carry the `.delta` suffix that
+    Project 1's `AdditiveDelta` swap appends (e.g. `model.layers.3.self_attn.q_proj.delta`). Only
+    block weights get the suffix; embed/unembed do not, so the strip/append is confined to
+    `_parse_block_path`/`_render_layer_weight`.
+    """
+
+    embedding_path = "model.embed_tokens"
+    blocks = "model.layers"
+    attn = _SeparateAttnPathSchema(base="self_attn", q="q_proj", k="k_proj", v="v_proj", o="o_proj")
+    mlp = _GLUPathSchema(base="mlp", gate="gate_proj", up="up_proj", down="down_proj")
+    unembed_path = "lm_head"
+
+    def _parse_block_path(self, path: str) -> LayerWeight:
+        return super()._parse_block_path(path.removesuffix(".delta"))
+
+    def _render_layer_weight(self, w: LayerWeight) -> str:
+        return super()._render_layer_weight(w) + ".delta"
+
+
 def get_path_schema(model: nn.Module) -> _PathSchema:
+    from transformers.models.gemma2 import Gemma2ForCausalLM
     from transformers.models.gpt2 import GPT2LMHeadModel
 
     from param_decomp_lab.experiments.lm.pretrain.models.gpt2 import GPT2
@@ -233,6 +254,8 @@ def get_path_schema(model: nn.Module) -> _PathSchema:
             return _GPT2PathSchema()
         case GPT2LMHeadModel():
             return _HFGpt2PathSchema()
+        case Gemma2ForCausalLM():
+            return _Gemma2DeltaPathSchema()
         case _:
             raise ValueError(
                 f"Unsupported model class {type(model).__name__}. Add a _PathSchema in path_schemas.py."
